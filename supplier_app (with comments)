@@ -2,11 +2,20 @@ import sys
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QStackedWidget, QLineEdit, QTableWidget,
-    QTableWidgetItem, QHeaderView, QCheckBox
+    QTableWidgetItem, QHeaderView, QCheckBox, QFileDialog
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
+# ---- ReportLab for PDF ----
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+# ✅ Register fonts
+pdfmetrics.registerFont(TTFont("DejaVuSans", "DejaVuSans.ttf"))   # handles ₱
+pdfmetrics.registerFont(TTFont("SegoeUIEmoji", "seguiemj.ttf"))  # handles emojis
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -14,16 +23,13 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Supplier Payment Workflow")
         self.setGeometry(200, 200, 1000, 600)
 
-        # store deliveries in memory (so orders + invoices + verification can reflect them)
         self.deliveries = []
         self.payment_done = False  # track payment state
 
-        # Main container
         container = QWidget()
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Sidebar
         sidebar_widget = QWidget()
         sidebar_widget.setStyleSheet("background-color: #2c3e50;")
         sidebar = QVBoxLayout(sidebar_widget)
@@ -58,7 +64,6 @@ class MainWindow(QMainWindow):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             sidebar.addWidget(btn)
 
-        # Main workspace
         self.stack = QStackedWidget()
         self.stack.setStyleSheet("background-color: #ecf0f1;")
 
@@ -67,7 +72,6 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.create_invoices_page())
         self.stack.addWidget(self.create_verification_page())
 
-        # Connect sidebar buttons
         btn_deliveries.clicked.connect(lambda: self.stack.setCurrentIndex(0))
         btn_orders.clicked.connect(lambda: self.refresh_orders())
         btn_invoices.clicked.connect(lambda: self.refresh_invoices())
@@ -79,7 +83,6 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(container)
 
     # -------------------- Deliveries --------------------
-
     def create_deliveries_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -88,13 +91,11 @@ class MainWindow(QMainWindow):
         title.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
         layout.addWidget(title)
 
-        # Table for deliveries
         self.deliveries_table = QTableWidget(0, 4)
         self.deliveries_table.setHorizontalHeaderLabels(["Product", "Quantity", "Price", "Delete"])
         self.deliveries_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.deliveries_table)
 
-        # Input fields
         input_layout = QHBoxLayout()
         self.input_product = QLineEdit()
         self.input_product.setPlaceholderText("Enter product name")
@@ -119,22 +120,17 @@ class MainWindow(QMainWindow):
         price = self.input_price.text()
 
         if product and quantity and price:
-            # Save to memory
             self.deliveries.append({"product": product, "quantity": int(quantity), "price": float(price)})
-
-            # Add row to table
             row = self.deliveries_table.rowCount()
             self.deliveries_table.insertRow(row)
             self.deliveries_table.setItem(row, 0, QTableWidgetItem(product))
             self.deliveries_table.setItem(row, 1, QTableWidgetItem(quantity))
             self.deliveries_table.setItem(row, 2, QTableWidgetItem(f"₱{price}"))
 
-            # Delete button
             btn_delete = QPushButton("🗑️")
             btn_delete.clicked.connect(lambda _, r=row: self.delete_delivery(r))
             self.deliveries_table.setCellWidget(row, 3, btn_delete)
 
-            # clear inputs
             self.input_product.clear()
             self.input_quantity.clear()
             self.input_price.clear()
@@ -145,7 +141,6 @@ class MainWindow(QMainWindow):
             self.deliveries_table.removeRow(row)
 
     # -------------------- Orders --------------------
-
     def create_orders_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -169,11 +164,16 @@ class MainWindow(QMainWindow):
             self.orders_table.insertRow(row)
             self.orders_table.setItem(row, 0, QTableWidgetItem(d["product"]))
             self.orders_table.setItem(row, 1, QTableWidgetItem(str(d["quantity"])))
+
             checkbox = QCheckBox()
-            self.orders_table.setCellWidget(row, 2, checkbox)
+            checkbox_container = QWidget()
+            checkbox_layout = QHBoxLayout(checkbox_container)
+            checkbox_layout.addWidget(checkbox)
+            checkbox_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            self.orders_table.setCellWidget(row, 2, checkbox_container)
 
     # -------------------- Invoices --------------------
-
     def create_invoices_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -187,13 +187,12 @@ class MainWindow(QMainWindow):
         self.invoice_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.invoice_table)
 
-        # total + pay button
         bottom_layout = QHBoxLayout()
         self.total_label = QLabel("Total: ₱0.00")
         self.total_label.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
         bottom_layout.addWidget(self.total_label)
 
-        self.pay_button = QPushButton("Pay")
+        self.pay_button = QPushButton("Generate Receipt")
         self.pay_button.setStyleSheet("background-color: #27ae60; color: white; padding: 8px; border-radius: 5px;")
         self.pay_button.clicked.connect(self.make_payment)
         bottom_layout.addWidget(self.pay_button)
@@ -222,7 +221,6 @@ class MainWindow(QMainWindow):
         self.refresh_verification()
 
     # -------------------- Verification --------------------
-
     def create_verification_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -237,6 +235,12 @@ class MainWindow(QMainWindow):
         self.receipt_label.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.addWidget(self.receipt_label)
 
+        # ✅ Button to download PDF
+        self.pdf_button = QPushButton("Download PDF Receipt")
+        self.pdf_button.setStyleSheet("background-color: #2980b9; color: white; padding: 8px; border-radius: 5px;")
+        self.pdf_button.clicked.connect(self.generate_pdf_receipt)
+        layout.addWidget(self.pdf_button)
+
         return page
 
     def refresh_verification(self):
@@ -245,17 +249,55 @@ class MainWindow(QMainWindow):
             self.receipt_label.setText("No payments yet.")
             return
 
-        # Build receipt text
         text = "🧾 Official Receipt\n\n"
         total = 0
         for d in self.deliveries:
             amount = d["quantity"] * d["price"]
             text += f"- {d['product']} | Qty: {d['quantity']} | Price: ₱{d['price']:,.2f} | Amount: ₱{amount:,.2f}\n"
             total += amount
-        text += f"\nTOTAL: ₱{total:,.2f}\n"
-        text += "\nStatus: PAID ✅"
-
+        text += f"\nTOTAL: ₱{total:,.2f}\n\nPayver"
         self.receipt_label.setText(text)
+
+    # -------------------- PDF Export --------------------
+    def generate_pdf_receipt(self):   # 👈 now inside MainWindow
+        if not self.payment_done:
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save PDF", "receipt.pdf", "PDF Files (*.pdf)"
+        )
+        if not file_path:
+            return
+
+        c = canvas.Canvas(file_path, pagesize=A4)
+        width, height = A4
+
+        y = height - 50
+        c.setFont("SegoeUIEmoji", 16)   # ✅ Use emoji font here
+        c.drawString(50, y, "🧾 Official Receipt")
+
+        y -= 40
+        total = 0
+        for d in self.deliveries:
+            amount = d["quantity"] * d["price"]
+            c.setFont("DejaVuSans", 12)   # Peso + text
+            line = (
+                f"- {d['product']} | Qty: {d['quantity']} | "
+                f"Price: ₱{d['price']:,.2f} | Amount: ₱{amount:,.2f}"
+            )
+            c.drawString(50, y, line)
+            y -= 20
+            total += amount
+
+        y -= 20
+        c.setFont("DejaVuSans", 14)
+        c.drawString(50, y, f"TOTAL: ₱{total:,.2f}")
+
+        y -= 30
+        c.setFont("SegoeUIEmoji", 14)   # ✅ Emoji font again
+        c.drawString(50, y, "Status: PAID ✅")
+
+        c.save()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
