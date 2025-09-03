@@ -2,11 +2,18 @@ import sys
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QStackedWidget, QLineEdit, QTableWidget,
-    QTableWidgetItem, QHeaderView, QCheckBox
+    QTableWidgetItem, QHeaderView, QCheckBox, QFileDialog
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+pdfmetrics.registerFont(TTFont("DejaVuSans", "DejaVuSans.ttf"))
+pdfmetrics.registerFont(TTFont("SegoeUIEmoji", "seguiemj.ttf"))
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -111,7 +118,6 @@ class MainWindow(QMainWindow):
 
         if product and quantity and price:
             self.deliveries.append({"product": product, "quantity": int(quantity), "price": float(price)})
-
             row = self.deliveries_table.rowCount()
             self.deliveries_table.insertRow(row)
             self.deliveries_table.setItem(row, 0, QTableWidgetItem(product))
@@ -154,8 +160,14 @@ class MainWindow(QMainWindow):
             self.orders_table.insertRow(row)
             self.orders_table.setItem(row, 0, QTableWidgetItem(d["product"]))
             self.orders_table.setItem(row, 1, QTableWidgetItem(str(d["quantity"])))
+
             checkbox = QCheckBox()
-            self.orders_table.setCellWidget(row, 2, checkbox)
+            checkbox_container = QWidget()
+            checkbox_layout = QHBoxLayout(checkbox_container)
+            checkbox_layout.addWidget(checkbox)
+            checkbox_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            self.orders_table.setCellWidget(row, 2, checkbox_container)
 
     def create_invoices_page(self):
         page = QWidget()
@@ -175,7 +187,7 @@ class MainWindow(QMainWindow):
         self.total_label.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
         bottom_layout.addWidget(self.total_label)
 
-        self.pay_button = QPushButton("Pay")
+        self.pay_button = QPushButton("Generate Receipt")
         self.pay_button.setStyleSheet("background-color: #27ae60; color: white; padding: 8px; border-radius: 5px;")
         self.pay_button.clicked.connect(self.make_payment)
         bottom_layout.addWidget(self.pay_button)
@@ -217,6 +229,11 @@ class MainWindow(QMainWindow):
         self.receipt_label.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.addWidget(self.receipt_label)
 
+        self.pdf_button = QPushButton("Download PDF Receipt")
+        self.pdf_button.setStyleSheet("background-color: #2980b9; color: white; padding: 8px; border-radius: 5px;")
+        self.pdf_button.clicked.connect(self.generate_pdf_receipt)
+        layout.addWidget(self.pdf_button)
+
         return page
 
     def refresh_verification(self):
@@ -231,11 +248,48 @@ class MainWindow(QMainWindow):
             amount = d["quantity"] * d["price"]
             text += f"- {d['product']} | Qty: {d['quantity']} | Price: ₱{d['price']:,.2f} | Amount: ₱{amount:,.2f}\n"
             total += amount
-        text += f"\nTOTAL: ₱{total:,.2f}\n"
-        text += "\nStatus: PAID ✅"
-
+        text += f"\nTOTAL: ₱{total:,.2f}\n\nPayver"
         self.receipt_label.setText(text)
 
+    def generate_pdf_receipt(self):
+        if not self.payment_done:
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save PDF", "receipt.pdf", "PDF Files (*.pdf)"
+        )
+        if not file_path:
+            return
+
+        c = canvas.Canvas(file_path, pagesize=A4)
+        width, height = A4
+
+        y = height - 50
+        c.setFont("SegoeUIEmoji", 16)
+        c.drawString(50, y, "🧾 Official Receipt")
+
+        y -= 40
+        total = 0
+        for d in self.deliveries:
+            amount = d["quantity"] * d["price"]
+            c.setFont("DejaVuSans", 12)
+            line = (
+                f"- {d['product']} | Qty: {d['quantity']} | "
+                f"Price: ₱{d['price']:,.2f} | Amount: ₱{amount:,.2f}"
+            )
+            c.drawString(50, y, line)
+            y -= 20
+            total += amount
+
+        y -= 20
+        c.setFont("DejaVuSans", 14)
+        c.drawString(50, y, f"TOTAL: ₱{total:,.2f}")
+
+        y -= 30
+        c.setFont("SegoeUIEmoji", 14)
+        c.drawString(50, y, "Status: PAID ✅")
+
+        c.save()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
